@@ -26,11 +26,7 @@ function applyTheme(theme: 'light' | 'dark') {
 }
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const t = getInitialTheme();
-    applyTheme(t);
-    return t;
-  });
+  const [theme, setTheme] = useState<'light' | 'dark'>(getInitialTheme);
 
   useEffect(() => {
     applyTheme(theme);

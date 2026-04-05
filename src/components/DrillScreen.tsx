@@ -17,7 +17,7 @@ interface DrillScreenProps {
 type FeedbackState =
   | { status: 'idle' }
   | { status: 'correct' }
-  | { status: 'wrong'; word: string; isValid: boolean };
+  | { status: 'wrong'; word: string; isValid: boolean; definition?: string };
 
 export function DrillScreen({
   currentCard,
@@ -38,18 +38,14 @@ export function DrillScreen({
     };
   }, []);
 
-  // Reset answered state when card changes
-  useEffect(() => {
-    setAnswered(false);
-    setFeedback({ status: 'idle' });
-  }, [currentCard]);
-
   const handleAnswer = useCallback(
     (userSaysValid: boolean) => {
       if (answered || !currentCard) return;
       setAnswered(true);
 
       const isCorrect = userSaysValid === currentCard.isValid;
+      // Capture definition now — currentCard will change after onAnswer fires
+      const definition = DEFINITIONS[currentCard.word];
 
       if (isCorrect) {
         setFeedback({ status: 'correct' });
@@ -58,13 +54,15 @@ export function DrillScreen({
           status: 'wrong',
           word: currentCard.word,
           isValid: currentCard.isValid,
+          definition,
         });
       }
 
-      onAnswer(isCorrect);
-
-      // Auto-advance after 1000ms
+      // Record the answer and advance the card AFTER the feedback is visible.
+      // Calling onAnswer here would immediately change currentCard, which would
+      // clear feedback before the user sees it.
       timerRef.current = setTimeout(() => {
+        onAnswer(isCorrect);
         setFeedback({ status: 'idle' });
         setAnswered(false);
       }, 1000);
@@ -79,8 +77,6 @@ export function DrillScreen({
     sessionLength !== 'unlimited'
       ? Math.min(cardsAnswered / (sessionLength as number), 1)
       : null;
-
-  const definition = DEFINITIONS[currentCard.word];
 
   return (
     <div className="min-h-screen bg-white dark:bg-[#111] text-gray-900 dark:text-gray-100 flex flex-col">
@@ -186,8 +182,8 @@ export function DrillScreen({
                     <p className="font-bold text-lg">
                       {feedback.word} is valid
                     </p>
-                    {definition && (
-                      <p className="text-sm mt-1 opacity-90">{definition}</p>
+                    {feedback.definition && (
+                      <p className="text-sm mt-1 opacity-90">{feedback.definition}</p>
                     )}
                   </>
                 ) : (

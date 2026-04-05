@@ -12,22 +12,17 @@ interface HomeScreenProps {
 
 const SESSION_LENGTHS: (number | 'unlimited')[] = [10, 25, 50, 'unlimited'];
 
-// Build filter options dynamically from available categories
+// Build filter options dynamically from available categories.
+// Adding a new category to the word list data automatically adds it here.
 function buildFilterOptions(): { label: string; value: FilterMode }[] {
   const cats = getAvailableCategories();
-  const options: { label: string; value: FilterMode }[] = [];
-
-  if (cats.includes('2-letter')) {
-    options.push({ label: '2-letter only', value: '2-letter' });
-  }
-  if (cats.includes('3-letter')) {
-    options.push({ label: '3-letter only', value: '3-letter' });
-  }
-  // If multiple categories exist, offer "both"
+  const options: { label: string; value: FilterMode }[] = cats.map((cat) => ({
+    label: `${cat} only`,
+    value: cat as FilterMode,
+  }));
   if (cats.length >= 2) {
     options.unshift({ label: 'Both', value: 'both' });
   }
-
   return options;
 }
 
