@@ -7,7 +7,14 @@ export type Category = '2-letter' | '3-letter';
 export interface WordEntry {
   word: string;
   category: Category;
-  isValid: boolean; // true = in NWL list, false = distractor
+}
+
+// Used during a drill session. isDecoy=true means the word is not in NWL2023
+// and the correct answer is INVALID.
+export interface SessionCard {
+  word: string;
+  category: Category;
+  isDecoy: boolean;
 }
 
 export interface WordProgress {

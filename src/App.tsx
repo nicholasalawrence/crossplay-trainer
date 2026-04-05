@@ -44,12 +44,12 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine.answerCard]);
 
-  const handleEndDrill = useCallback(() => {
-    const result = engine.endSession();
-    setLastResult(result);
-    setScreen('summary');
+  const handleExit = useCallback(() => {
+    // Discard session — no SRS written, no summary shown
+    engine.resetSession();
+    setScreen('home');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine.endSession, engine.cardsAnswered]);
+  }, []);
 
   const handleStudyAgain = useCallback(() => {
     handleStart(lastFilter, lastLength);
@@ -79,7 +79,7 @@ export default function App() {
           sessionLength={engine.sessionLength}
           streak={engine.streak}
           onAnswer={handleAnswer}
-          onEnd={handleEndDrill}
+          onExit={handleExit}
         />
       )}
 

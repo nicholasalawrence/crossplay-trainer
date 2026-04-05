@@ -1,23 +1,25 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { WordEntry } from '../types';
+import type { SessionCard } from '../types';
 import { ThemeToggle } from './ThemeToggle';
 import definitions from '../data/definitions.json';
 
 const DEFINITIONS = definitions as Record<string, string>;
 
 interface DrillScreenProps {
-  currentCard: WordEntry | null;
+  currentCard: SessionCard | null;
   cardsAnswered: number;
   sessionLength: number | 'unlimited';
   streak: number;
   onAnswer: (isCorrect: boolean) => void;
-  onEnd: () => void;
+  onExit: () => void;
 }
 
 type FeedbackState =
   | { status: 'idle' }
   | { status: 'correct' }
-  | { status: 'wrong'; word: string; isValid: boolean; definition?: string };
+  // holdForUser=true: wrong answer on a real valid word — wait for "Got it" tap
+  // holdForUser=false: wrong answer on a decoy — auto-advance after 1000ms
+  | { status: 'wrong'; word: string; isDecoy: boolean; definition?: string; holdForUser: boolean };
 
 export function DrillScreen({
   currentCard,
@@ -25,7 +27,7 @@ export function DrillScreen({
   sessionLength,
   streak,
   onAnswer,
-  onEnd,
+  onExit,
 }: DrillScreenProps) {
   const [feedback, setFeedback] = useState<FeedbackState>({ status: 'idle' });
   const [answered, setAnswered] = useState(false);
@@ -43,32 +45,48 @@ export function DrillScreen({
       if (answered || !currentCard) return;
       setAnswered(true);
 
-      const isCorrect = userSaysValid === currentCard.isValid;
-      // Capture definition now — currentCard will change after onAnswer fires
+      // Correct = user's answer matches what the card actually is
+      // Decoys are invalid, so correct = user says INVALID (userSaysValid===false)
+      const isCorrect = userSaysValid !== currentCard.isDecoy;
       const definition = DEFINITIONS[currentCard.word];
 
       if (isCorrect) {
         setFeedback({ status: 'correct' });
+        timerRef.current = setTimeout(() => {
+          onAnswer(true);
+          setFeedback({ status: 'idle' });
+          setAnswered(false);
+        }, 1000);
       } else {
+        // Wrong on a real valid word: hold until user taps "Got it"
+        // Wrong on a decoy: auto-advance after 1000ms (nothing to memorize)
+        const holdForUser = !currentCard.isDecoy;
         setFeedback({
           status: 'wrong',
           word: currentCard.word,
-          isValid: currentCard.isValid,
+          isDecoy: currentCard.isDecoy,
           definition,
+          holdForUser,
         });
+        if (!holdForUser) {
+          timerRef.current = setTimeout(() => {
+            onAnswer(false);
+            setFeedback({ status: 'idle' });
+            setAnswered(false);
+          }, 1000);
+        }
+        // If holdForUser, no timer — handleGotIt drives the advance
       }
-
-      // Record the answer and advance the card AFTER the feedback is visible.
-      // Calling onAnswer here would immediately change currentCard, which would
-      // clear feedback before the user sees it.
-      timerRef.current = setTimeout(() => {
-        onAnswer(isCorrect);
-        setFeedback({ status: 'idle' });
-        setAnswered(false);
-      }, 1000);
     },
     [answered, currentCard, onAnswer]
   );
+
+  // Called when user taps "Got it" after a wrong answer on a valid word
+  const handleGotIt = useCallback(() => {
+    onAnswer(false);
+    setFeedback({ status: 'idle' });
+    setAnswered(false);
+  }, [onAnswer]);
 
   // No card left — session should end (parent handles this via currentCard being null)
   if (!currentCard) return null;
@@ -83,10 +101,10 @@ export function DrillScreen({
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
         <button
-          onClick={onEnd}
+          onClick={onExit}
           className="text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
         >
-          ← End
+          ← Exit
         </button>
         <span className="text-sm text-gray-500 dark:text-gray-400">
           {sessionLength === 'unlimited'
@@ -159,7 +177,9 @@ export function DrillScreen({
       {/* Feedback overlay */}
       {feedback.status !== 'idle' && (
         <div
-          className={`fixed inset-0 flex items-center justify-center pointer-events-none z-50 transition-opacity duration-200 ${
+          className={`fixed inset-0 flex items-center justify-center z-50 transition-opacity duration-200 ${
+            feedback.status === 'wrong' && feedback.holdForUser ? '' : 'pointer-events-none'
+          } ${
             feedback.status === 'correct'
               ? 'bg-green-600/30'
               : 'bg-red-600/30'
@@ -177,7 +197,7 @@ export function DrillScreen({
             ) : (
               <div>
                 <span className="text-4xl block mb-2">✗</span>
-                {feedback.isValid ? (
+                {!feedback.isDecoy ? (
                   <>
                     <p className="font-bold text-lg">
                       {feedback.word} is valid
@@ -185,10 +205,18 @@ export function DrillScreen({
                     {feedback.definition && (
                       <p className="text-sm mt-1 opacity-90">{feedback.definition}</p>
                     )}
+                    {feedback.holdForUser && (
+                      <button
+                        onClick={handleGotIt}
+                        className="mt-4 px-6 py-2 bg-white text-red-600 font-bold rounded-xl pointer-events-auto"
+                      >
+                        Got it
+                      </button>
+                    )}
                   </>
                 ) : (
                   <p className="font-bold text-lg">
-                    {feedback.word} is not valid in NWL2023
+                    {feedback.word} is not a valid NWL2023 word
                   </p>
                 )}
               </div>

@@ -1,53 +1,40 @@
 import { useState, useCallback, useMemo } from 'react';
-import type { WordEntry, WordProgress, FilterMode, SessionResult, Category } from '../types';
+import type { WordEntry, SessionCard, WordProgress, FilterMode, SessionResult, Category } from '../types';
 import wordData from '../data/words_nwl23.json';
-import invalidData from '../data/invalid_distractors.json';
 
 const STORAGE_KEY = 'nwl_progress';
-const DISTRACTOR_RATIO = 0.35; // ~35% of cards will be invalid distractors
+const DECOY_RATIO = 0.25; // ~1 decoy per 3 real words
 
 // ---------------------------------------------------------------------------
 // Build the full word list from JSON
 // ---------------------------------------------------------------------------
 
+type WordData = {
+  two_letter: string[];
+  three_letter: string[];
+  decoys_2: string[];
+  decoys_3: string[];
+};
+
 function buildWordList(): WordEntry[] {
+  const raw = wordData as WordData;
   const entries: WordEntry[] = [];
-
-  const rawData = wordData as { two_letter: string[]; three_letter: string[] };
-  const invalidRawData = invalidData as { two_letter: string[]; three_letter: string[] };
-
-  // Collect all valid NWL words into a set for fast lookup
-  const validSet = new Set<string>();
-  rawData.two_letter.forEach((w) => validSet.add(w.toUpperCase()));
-  rawData.three_letter.forEach((w) => validSet.add(w.toUpperCase()));
-
-  // Valid NWL words
-  rawData.two_letter.forEach((w) => {
-    entries.push({ word: w.toUpperCase(), category: '2-letter', isValid: true });
-  });
-  rawData.three_letter.forEach((w) => {
-    entries.push({ word: w.toUpperCase(), category: '3-letter', isValid: true });
-  });
-
-  // Invalid distractors — filter out any that accidentally appear in the valid set
-  invalidRawData.two_letter.forEach((w) => {
-    const upper = w.toUpperCase();
-    if (!validSet.has(upper)) {
-      entries.push({ word: upper, category: '2-letter', isValid: false });
-    }
-  });
-  invalidRawData.three_letter.forEach((w) => {
-    const upper = w.toUpperCase();
-    if (!validSet.has(upper)) {
-      entries.push({ word: upper, category: '3-letter', isValid: false });
-    }
-  });
-
+  raw.two_letter.forEach((w) => entries.push({ word: w.toUpperCase(), category: '2-letter' }));
+  raw.three_letter.forEach((w) => entries.push({ word: w.toUpperCase(), category: '3-letter' }));
   return entries;
 }
 
-// Cache globally so it's only built once
+function buildDecoyList(): SessionCard[] {
+  const raw = wordData as WordData;
+  const decoys: SessionCard[] = [];
+  raw.decoys_2.forEach((w) => decoys.push({ word: w.toUpperCase(), category: '2-letter', isDecoy: true }));
+  raw.decoys_3.forEach((w) => decoys.push({ word: w.toUpperCase(), category: '3-letter', isDecoy: true }));
+  return decoys;
+}
+
+// Cached globally — built once at module load
 const ALL_WORDS: WordEntry[] = buildWordList();
+const ALL_DECOYS: SessionCard[] = buildDecoyList();
 
 // ---------------------------------------------------------------------------
 // Derive unique categories from word list (extensibility hook)
@@ -163,62 +150,53 @@ function buildQueue(
   filterMode: FilterMode,
   sessionLength: number | 'unlimited',
   progress: Record<string, WordProgress>
-): WordEntry[] {
+): SessionCard[] {
   const today = todayStr();
 
-  // Filter valid words by category
-  const filteredValid = ALL_WORDS.filter(
-    (w) =>
-      w.isValid &&
-      (filterMode === 'both' || w.category === filterMode)
+  // Filter real words and decoys by category
+  const filteredWords = ALL_WORDS.filter(
+    (w) => filterMode === 'both' || w.category === filterMode
+  );
+  const filteredDecoys = ALL_DECOYS.filter(
+    (w) => filterMode === 'both' || w.category === filterMode
   );
 
-  // Filter invalid distractors by category
-  const filteredInvalid = ALL_WORDS.filter(
-    (w) =>
-      !w.isValid &&
-      (filterMode === 'both' || w.category === filterMode)
-  );
-
-  // Determine target length for the queue
+  // Determine target session length
   const targetLength =
     sessionLength === 'unlimited'
-      ? filteredValid.length + Math.floor(filteredValid.length * DISTRACTOR_RATIO)
+      ? Math.round(filteredWords.length / (1 - DECOY_RATIO))
       : sessionLength;
 
-  // Separate due vs non-due valid words
-  const dueValid = filteredValid.filter((w) => {
+  // Split real words into due vs non-due
+  const due = filteredWords.filter((w) => {
     const p = progress[w.word];
     return !p || p.dueDate <= today;
   });
-  const nonDueValid = filteredValid.filter((w) => {
+  const nonDue = filteredWords.filter((w) => {
     const p = progress[w.word];
     return p && p.dueDate > today;
   });
 
-  // How many valid vs invalid cards in the session
-  const invalidCount = Math.round(targetLength * DISTRACTOR_RATIO);
-  const validCount = targetLength - invalidCount;
+  // How many real vs decoy cards
+  const decoyCount = Math.round(targetLength * DECOY_RATIO);
+  const realCount = targetLength - decoyCount;
 
-  // Build valid side: due first, then pad with non-due
-  let validQueue: WordEntry[] = shuffle(dueValid);
-  if (validQueue.length < validCount) {
-    const nonDueShuffled = shuffle(nonDueValid);
-    validQueue = [
-      ...validQueue,
-      ...nonDueShuffled.slice(0, validCount - validQueue.length),
-    ];
+  // Real side: due words first, pad with non-due if needed
+  let realQueue = shuffle(due);
+  if (realQueue.length < realCount) {
+    realQueue = [...realQueue, ...shuffle(nonDue).slice(0, realCount - realQueue.length)];
   } else {
-    validQueue = validQueue.slice(0, validCount);
+    realQueue = realQueue.slice(0, realCount);
   }
 
-  // Build invalid side: shuffle and pick
-  const invalidQueue = shuffle(filteredInvalid).slice(0, invalidCount);
+  // Convert real WordEntry[] to SessionCard[]
+  const realCards: SessionCard[] = realQueue.map((w) => ({ ...w, isDecoy: false }));
 
-  // Interleave valid and invalid
-  const combined = shuffle([...validQueue, ...invalidQueue]);
+  // Decoy side
+  const decoyCards = shuffle(filteredDecoys).slice(0, decoyCount);
 
-  return combined;
+  // Shuffle everything together
+  return shuffle([...realCards, ...decoyCards]);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,9 +208,9 @@ export interface WordEngineState {
   allWords: WordEntry[];
 
   // Session state
-  queue: WordEntry[];
+  queue: SessionCard[];
   currentIndex: number;
-  currentCard: WordEntry | null;
+  currentCard: SessionCard | null;
   isSessionActive: boolean;
   sessionLength: number | 'unlimited';
   filterMode: FilterMode;
@@ -264,7 +242,7 @@ export function useWordEngine(): WordEngineState {
   const [progress, setProgress] = useState<Record<string, WordProgress>>(() =>
     loadProgress()
   );
-  const [queue, setQueue] = useState<WordEntry[]>([]);
+  const [queue, setQueue] = useState<SessionCard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [sessionLength, setSessionLength] = useState<number | 'unlimited'>(25);
@@ -305,13 +283,14 @@ export function useWordEngine(): WordEngineState {
     (isCorrect: boolean) => {
       if (!currentCard) return;
 
-      const word = currentCard.word;
-      const prog = loadProgress();
-      const existing = getOrCreateProgress(word, prog);
-      const updated = isCorrect ? applyCorrect(existing) : applyWrong(existing);
-      const newProg = { ...prog, [word]: updated };
-      saveProgress(newProg);
-      setProgress(newProg);
+      // Only update SRS for real words — decoys are not tracked
+      if (!currentCard.isDecoy) {
+        const word = currentCard.word;
+        const existing = getOrCreateProgress(word, progress);
+        const updated = isCorrect ? applyCorrect(existing) : applyWrong(existing);
+        // Buffer in memory — written to localStorage only on natural session end
+        setProgress((prev) => ({ ...prev, [word]: updated }));
+      }
 
       setCardsAnswered((c) => c + 1);
 
@@ -325,19 +304,22 @@ export function useWordEngine(): WordEngineState {
       } else {
         setWrong((w) => w + 1);
         setStreak(0);
-        setMissedWords((m) => [...m, word]);
+        if (!currentCard.isDecoy) {
+          setMissedWords((m) => [...m, currentCard.word]);
+        }
       }
 
       setCurrentIndex((i) => i + 1);
     },
-    [currentCard]
+    [currentCard, progress]
   );
 
   const endSession = useCallback((): SessionResult => {
     setIsSessionActive(false);
-    const totalAnswered = cardsAnswered;
+    // Commit buffered SRS progress to localStorage
+    saveProgress(progress);
     return {
-      totalAnswered,
+      totalAnswered: cardsAnswered,
       correct,
       wrong,
       bestStreak,
@@ -345,9 +327,11 @@ export function useWordEngine(): WordEngineState {
       filterMode,
       sessionLength,
     };
-  }, [cardsAnswered, correct, wrong, bestStreak, missedWords, filterMode, sessionLength]);
+  }, [progress, cardsAnswered, correct, wrong, bestStreak, missedWords, filterMode, sessionLength]);
 
   const resetSession = useCallback(() => {
+    // Discard buffered progress by reloading from localStorage (no write)
+    setProgress(loadProgress());
     setIsSessionActive(false);
     setQueue([]);
     setCurrentIndex(0);
@@ -364,7 +348,6 @@ export function useWordEngine(): WordEngineState {
       const today = todayStr();
       const prog = loadProgress();
       return ALL_WORDS.filter((w) => {
-        if (!w.isValid) return false;
         if (filter !== 'both' && w.category !== filter) return false;
         const p = prog[w.word];
         return !p || p.dueDate <= today;
@@ -377,7 +360,6 @@ export function useWordEngine(): WordEngineState {
     (filter: FilterMode): number => {
       const prog = loadProgress();
       return ALL_WORDS.filter((w) => {
-        if (!w.isValid) return false;
         if (filter !== 'both' && w.category !== filter) return false;
         const p = prog[w.word];
         return p && p.interval >= 21;
