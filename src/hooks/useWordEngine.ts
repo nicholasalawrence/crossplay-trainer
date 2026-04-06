@@ -14,6 +14,7 @@ type WordData = {
   three_letter: string[];
   decoys_2: string[];
   decoys_3: string[];
+  definitions: Record<string, string>;
 };
 
 function buildWordList(): WordEntry[] {
